@@ -209,7 +209,7 @@ AdHello helps home service businesses (plumbing, HVAC, landscaping, cleaning, ro
 - Be conversational, not robotic — use contractions, casual tone
 - If they ask about pricing: "Our plans start at $97/mo, but let's do the free audit first so we can recommend the right fit"
 - If they say they're not interested: "No worries! If you ever want to see how you rank on Google, just visit ${CONFIG.businessWebsite}/audit — it's free, no strings attached"
-- If they ask to speak to a human: "Absolutely! You can call us at ${CONFIG.businessPhone} or I can have someone reach out. What's your email?"
+- If they ask to speak to a human: "Absolutely! You can call us at ${CONFIG.businessPhone} or I can have someone reach out. What's your email?" (NOTE: a Telegram alert has been sent to the team — they may reach out directly)
 - NEVER be pushy. Be helpful first.
 - When you have name + email + need, wrap up warmly and say the team will be in touch
 
@@ -265,6 +265,7 @@ app.post('/api/session', (req, res) => {
     createdAt: new Date().toISOString(),
     leadCaptured: false,
     followUpCreated: false,
+    humanRequested: false,
   };
   sessions.set(sessionId, session);
   res.json({
@@ -299,6 +300,40 @@ app.post('/api/chat', async (req, res) => {
     }
 
     session.messages.push({ role: 'user', content: message });
+
+    // ── Check if visitor wants to talk to a person ──────────────────────────────
+    const humanKeywords = [
+      'talk to a person', 'speak to someone', 'real person', 'human agent',
+      'talk to someone', 'speak to a human', 'real human', 'agent please',
+      'representative', 'live agent', 'live person', 'operator',
+      'i want to talk to', 'i need to talk to', 'can i speak to',
+      'can i talk to', 'transfer me', 'escalate', 'manager',
+      'not a robot', 'not a chatbot', 'real person please'
+    ];
+    const wantsHuman = humanKeywords.some(kw =>
+      message.toLowerCase().includes(kw)
+    );
+
+    if (wantsHuman && !session.humanRequested) {
+      session.humanRequested = true;
+      // Immediately notify Alex via Telegram
+      setImmediate(async () => {
+        try {
+          const alertText =
+            `🆘 <b>Visitor wants to talk to a person!</b>\n\n` +
+            `📍 <b>Page:</b> ${CONFIG.businessWebsite}\n` +
+            `👤 <b>Name:</b> ${session.leadName || 'Not provided'}\n` +
+            `📧 <b>Email:</b> ${session.leadEmail || 'Not provided'}\n` +
+            `📱 <b>Phone:</b> ${session.leadPhone || 'Not provided'}\n` +
+            `🏢 <b>Company:</b> ${session.company || 'N/A'}\n` +
+            `💬 <b>Business:</b> ${session.businessType || 'N/A'}\n` +
+            `🔧 <b>Need:</b> ${session.need || 'N/A'}\n\n` +
+            `📝 <b>Chat history:</b>\n${session.messages.map(m => `${m.role}: ${m.content}`).join('\n')}`;
+          await notifyTelegram(alertText);
+          console.log('[CHATBOT] Human request alert sent to Telegram');
+        } catch (e) { console.error('[CHATBOT] Human alert error:', e.message); }
+      });
+    }
 
     const llmMessages = [
       { role: 'system', content: getSystemPrompt(session) },
